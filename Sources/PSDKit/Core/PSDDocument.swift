@@ -133,14 +133,27 @@ public struct PSDDocument: @unchecked Sendable {
 
     /// The record index of the layer with this name, topmost first, or a
     /// "#index" as `layers` reports it.
-    func recordIndex(_ name: String) throws -> Int {
+    /// The record a name or `#index` refers to.
+    ///
+    /// Layer names repeat — a group called "blur" holding a smart object
+    /// called "blur", in a published sample — so a lookup that needs one
+    /// kind takes the one layer of that kind with the name, and refuses
+    /// when there is more than one rather than guess.
+    ///
+    /// - Parameters:
+    ///   - name: The layer's name, or "#index".
+    ///   - wanted: The kind the caller needs, when it needs one.
+    func recordIndex(_ name: String, wanted: LayerKind? = nil) throws -> Int {
         if name.hasPrefix("#"), let index = Int(name.dropFirst()), index >= 0, index < file.layers.records.count {
             return index
         }
-        for (index, record) in file.layers.records.enumerated().reversed() where Compositor.name(of: record) == name {
-            return index
-        }
-        throw PSDError.layerNotFound(name)
+        let named = file.layers.records.indices.reversed().filter { Compositor.name(of: file.layers.records[$0]) == name }
+        guard let first = named.first else { throw PSDError.layerNotFound(name) }
+        guard named.count > 1, let wanted else { return first }
+        let fitting = named.filter { kind(of: file.layers.records[$0]) == wanted }
+        if fitting.count == 1 { return fitting[0] }
+        if fitting.count > 1 { throw PSDError.ambiguousLayer(name, indices: fitting) }
+        return first
     }
 
     func linkedFile(_ id: String) -> LinkedFileRecord? {
@@ -183,16 +196,30 @@ public struct PSDDocument: @unchecked Sendable {
 
     /// Changes what a type layer says.
     ///
+    /// The layer's pixels are redrawn with Core Text in the layer's own font.
+    /// Most real templates are set in Adobe's fonts — 17 of 20 text layers in
+    /// ag-psd's published samples were Myriad Pro, Calibri or Microsoft YaHei,
+    /// none of which a Mac has without Adobe's apps — so two ways past a
+    /// missing font are offered rather than drawing in the wrong face
+    /// unasked: `substituteFont` draws with a named stand-in (the file keeps
+    /// the original font, and Photoshop redraws with it on update), and
+    /// `redraw: false` changes the words only, leaving the old pixels for
+    /// Photoshop to redraw when it opens the file.
+    ///
     /// - Parameters:
     ///   - text: The new words; "\n" starts a new paragraph.
     ///   - name: The layer's name, or "#index".
+    ///   - substituteFont: A PostScript name to draw with instead of the layer's font.
+    ///   - redraw: Whether to redraw the pixels at all.
     /// - Returns: What was changed, and whether Quick Look will show it.
     /// - Throws: ``PSDError/layerNotFound(_:)``, ``PSDError/wrongLayerKind(name:expected:actual:)``,
-    ///   ``PSDError/fontMissing(_:)``, ``PSDError/unsupportedForEditing(_:)``.
+    ///   ``PSDError/fontMissing(_:)``, ``PSDError/unsupportedForEditing(_:)``,
+    ///   ``PSDError/ambiguousLayer(_:indices:)``.
     @discardableResult
-    public mutating func setText(_ text: String, layer name: String) throws -> EditReport {
+    public mutating func setText(_ text: String, layer name: String, substituteFont: String? = nil,
+                                 redraw: Bool = true) throws -> EditReport {
         try requireEditable()
-        let index = try recordIndex(name)
+        let index = try recordIndex(name, wanted: .type)
         let record = file.layers.records[index]
         guard let block = record.block("TySh") else {
             throw PSDError.wrongLayerKind(name: name, expected: "text", actual: kind(of: record).rawValue)
@@ -201,8 +228,9 @@ public struct PSDDocument: @unchecked Sendable {
         let engine = try TextEditing.replacingText(in: tool.engineData, with: text)
         tool.text.setData("EngineData", engine)
         tool.text.setText("Txt ", text.replacingOccurrences(of: "\r\n", with: "\r").replacingOccurrences(of: "\n", with: "\r"))
-        let model = try TextRenderer.model(of: tool)
-        let rgba = try TextRenderer.render(model, width: file.width, height: file.height)
+        var model = try TextRenderer.model(of: tool)
+        let original = model.style.font
+        if let substituteFont { model.style.font = substituteFont }
 
         var edited = record
         edited.blocks = edited.blocks.map { $0.key == "TySh" ? TaggedBlock(signature: $0.signature, key: "TySh", data: evenPadded(tool.encoded()), lengthWidth: $0.lengthWidth) : $0 }
@@ -213,7 +241,19 @@ public struct PSDDocument: @unchecked Sendable {
             rename(&edited, to: text.components(separatedBy: .newlines).joined(separator: " "))
         }
         file.layers.blocks.removeAll { $0.key == "Txt2" }
-        return try replacePixels(index: index, record: edited, rgba: rgba, change: "text")
+
+        guard redraw else {
+            file.layers.records[index] = edited
+            editedRecords.insert(index)
+            let bounds = [Int(record.left), Int(record.top), Int(record.right), Int(record.bottom)]
+            return EditReport(layer: Compositor.name(of: edited), change: "text", boundsBefore: bounds, boundsAfter: bounds,
+                              pixelsRedrawn: false, compositeUpdated: false,
+                              compositeNote: "the old pixels were kept — Photoshop redraws the text when it opens the file",
+                              photoshopWillAskToUpdateText: true, drawnWith: nil)
+        }
+        let rgba = try TextRenderer.render(model, width: file.width, height: file.height)
+        let report = try replacePixels(index: index, record: edited, rgba: rgba, change: "text")
+        return substituteFont == nil ? report : report.drawn(with: "\(substituteFont!) standing in for \(original)")
     }
 
     /// Swaps the picture an embedded smart object shows.
@@ -224,7 +264,7 @@ public struct PSDDocument: @unchecked Sendable {
     @discardableResult
     public mutating func replaceContents(of name: String, with image: CGImage, fit: ContentFit = .fill) throws -> EditReport {
         try requireEditable()
-        let index = try recordIndex(name)
+        let index = try recordIndex(name, wanted: .smartObject)
         let record = file.layers.records[index]
         let layerKind = kind(of: record)
         guard layerKind == .smartObject, let block = record.block("SoLd") else {
@@ -306,12 +346,13 @@ public struct PSDDocument: @unchecked Sendable {
                           boundsBefore: [Int(before.left), Int(before.top), Int(before.right), Int(before.bottom)],
                           boundsAfter: [pixels.left, pixels.top, pixels.right, pixels.bottom],
                           pixelsRedrawn: true, compositeUpdated: compositeUpdated, compositeNote: compositeNote,
-                          photoshopWillAskToUpdateText: change == "text" && !file.layers.blocks.contains { $0.key == "Txt2" })
+                          photoshopWillAskToUpdateText: change == "text" && !file.layers.blocks.contains { $0.key == "Txt2" },
+                          drawnWith: nil)
     }
 
     /// Writes a layer's name both ways a PSD keeps it: the Pascal name (Mac
     /// Roman, padded to four) and the 'luni' block (UTF-16, padded to four).
-    private func rename(_ record: inout LayerRecord, to name: String) {
+    func rename(_ record: inout LayerRecord, to name: String) {
         var pascal = name.data(using: .macOSRoman, allowLossyConversion: true) ?? Data()
         if pascal.count > 255 { pascal = pascal.prefix(255) }
         var raw = Data([UInt8(pascal.count)]) + pascal

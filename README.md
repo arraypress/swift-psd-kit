@@ -63,6 +63,26 @@ A PSD is read three ways, and an edit has to reach each:
   the engine's runs (19 + 12 for two lines, 31 for the style), the new PNG payload
   — and composites it. ImageIO opens it; Quick Look shows the change.
 
+## Measured, on 102 real Photoshop files (ag-psd's samples, MIT)
+
+Every text and smart-object layer in ag-psd's published test files
+(`test/read`, `test/read-write`; used as test input, one shipped as a fixture
+under its licence) was edited and the result read back by psd-tools 1.24:
+
+| | |
+|---|---|
+| Smart-object pictures swapped | **76 of 81**; the 5 refused were 3 warped layers (by design) and 2 that found a GROUP of the same name — fixed in 0.2.0, the name now finds the layer the edit needs |
+| Text changed, layer's own font | **2 of 20** — the other 18 are set in fonts a Mac lacks without Adobe's apps: Myriad Pro (Photoshop's default), Calibri, Microsoft YaHei, Noto Sans KR, Aachen |
+| Text changed, `substituteFont:` (0.2.0) | **18 of 18** — drawn with a stand-in, the file keeps its own font for Photoshop |
+| Text changed, `redraw: false` (0.2.0) | **18 of 18** — words changed, pixels byte-identical, Photoshop redraws on open |
+| Every output | read back by psd-tools with the new text or PNG payload in place, and composited |
+
+So the font, not the format, is what stops real templates: refusing to draw
+in the wrong face is still the default, and the two ways past it are named
+choices. Photoshop itself was not available to test the "update text layers"
+prompt; ag-psd's documentation and psd-tools agree on the mechanism (the
+document's `Txt2` block is omitted).
+
 ## Limits, said plainly
 
 - Edits need **8-bit RGB**; other modes and depths are read, not edited.

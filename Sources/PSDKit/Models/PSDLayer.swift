@@ -64,4 +64,13 @@ public struct EditReport: Sendable, Codable, Equatable {
     /// For text: the document-wide text engine data was dropped, so
     /// Photoshop offers to update the text layers when the file is opened.
     public let photoshopWillAskToUpdateText: Bool
+    /// For text drawn with a stand-in font: which, and for what.
+    public let drawnWith: String?
+
+    /// The same report, noting the stand-in font the pixels were drawn with.
+    func drawn(with note: String) -> EditReport {
+        EditReport(layer: layer, change: change, boundsBefore: boundsBefore, boundsAfter: boundsAfter,
+                   pixelsRedrawn: pixelsRedrawn, compositeUpdated: compositeUpdated, compositeNote: compositeNote,
+                   photoshopWillAskToUpdateText: photoshopWillAskToUpdateText, drawnWith: note)
+    }
 }

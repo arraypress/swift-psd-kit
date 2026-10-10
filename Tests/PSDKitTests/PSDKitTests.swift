@@ -161,6 +161,43 @@ struct TextTests {
         #expect(throws: PSDError.fontMissing("NoSuchFont-Regular")) { try TextRenderer.render(model, width: 10, height: 10) }
     }
 
+    @Test("A real template set in a missing font is refused, with two ways past")
+    func missingFontWaysPast() throws {
+        // ag-psd's sample is Myriad Pro — 17 of 20 real text layers were in a
+        // font this Mac lacks — so plain setText refuses...
+        var refused = try load("agpsd-text-layer.psd")
+        #expect(throws: PSDError.self) { try refused.setText("Edited", layer: "Test text") }
+
+        // ...a stand-in draws the pixels, and says so...
+        var substituted = try load("agpsd-text-layer.psd")
+        let drawn = try substituted.setText("Edited", layer: "Test text", substituteFont: "Helvetica")
+        #expect(drawn.pixelsRedrawn)
+        #expect(drawn.drawnWith == "Helvetica standing in for MyriadPro-Regular")
+        let back = try PSDDocument(data: substituted.data())
+        #expect(back.layers.contains { $0.kind == .type && $0.text == "Edited" })
+        #expect(back.layers.first { $0.kind == .type }?.textStyle?.font == "MyriadPro-Regular",
+                "the file keeps its own font for Photoshop to redraw with")
+
+        // ...and data-only changes the words and leaves every pixel.
+        var dataOnly = try load("agpsd-text-layer.psd")
+        let original = try load("agpsd-text-layer.psd")
+        let index = try dataOnly.recordIndex("Test text", wanted: .type)
+        let report = try dataOnly.setText("Edited", layer: "Test text", redraw: false)
+        #expect(!report.pixelsRedrawn && report.photoshopWillAskToUpdateText)
+        let kept = try PSDDocument(data: dataOnly.data())
+        #expect(kept.file.layers.channelData[index] == original.file.layers.channelData[index], "pixels byte-identical")
+        #expect(kept.file.imageData == original.file.imageData, "merged image untouched")
+        #expect(kept.layers.contains { $0.kind == .type && $0.text == "Edited" })
+    }
+
+    @Test("A stand-in font that is not installed is refused too")
+    func missingSubstitute() throws {
+        var document = try load("text.psd")
+        #expect(throws: PSDError.fontMissing("NoSuchFont-Regular")) {
+            try document.setText("x", layer: "#1", substituteFont: "NoSuchFont-Regular")
+        }
+    }
+
     @Test("Characters the engine data must escape survive")
     func escaping() throws {
         let encoded = EngineData.encodeString("a(b)c\\d — 東京")
@@ -213,6 +250,20 @@ struct SmartObjectTests {
         let bottomLeft = ((Int(record.bottom) - 1) * back.width + Int(record.left)) * 4
         #expect(layer.pixels[topLeft] > 0.9 && layer.pixels[topLeft + 2] < 0.1)
         #expect(layer.pixels[bottomLeft + 2] > 0.9 && layer.pixels[bottomLeft] < 0.1)
+    }
+
+    @Test("A name shared with another kind of layer finds the one the edit needs")
+    func sharedName() throws {
+        // ag-psd's smart-filters sample has a group "blur" holding a smart
+        // object "blur"; the first lookup found the group and refused.
+        var document = try load("placedLayer.psd")
+        let smart = try #require(document.layers.first { $0.kind == .smartObject })
+        let pixel = try #require(document.file.layers.records.indices.first {
+            document.kind(of: document.file.layers.records[$0]) == .pixel })
+        var record = document.file.layers.records[pixel]
+        document.rename(&record, to: smart.name)
+        document.file.layers.records[pixel] = record
+        _ = try document.replaceContents(of: smart.name, with: asymmetric())
     }
 
     @Test("A linked smart object and a pixel layer are refused")

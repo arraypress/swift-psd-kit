@@ -27,6 +27,8 @@ public enum PSDError: Error, LocalizedError, Sendable, Equatable {
     case unreadableImage(String)
     /// A written file failed its own check and was not kept.
     case unverified(String)
+    /// Several layers of the kind needed share the name; carries their indices.
+    case ambiguousLayer(String, indices: [Int])
 
     /// A lowercase phrase that reads inside a sentence, for a CLI or a log.
     public var errorDescription: String? {
@@ -38,9 +40,12 @@ public enum PSDError: Error, LocalizedError, Sendable, Equatable {
             func article(_ word: String) -> String { "aeiou".contains(word.lowercased().first ?? "x") ? "an" : "a" }
             return "\"\(name)\" is \(article(actual)) \(actual) layer, not \(article(expected)) \(expected) layer"
         case .unsupportedForEditing(let why): return "this file can be read but not edited: \(why)"
-        case .fontMissing(let font): return "the font \(font) is not installed, so the text cannot be redrawn"
+        case .fontMissing(let font):
+            return "the font \(font) is not installed, so the text cannot be redrawn — name a stand-in to draw with, or leave the redraw to Photoshop"
         case .unreadableImage(let name): return "\(name) is not an image this system can read"
         case .unverified(let why): return "the written file failed its check and was not kept: \(why)"
+        case .ambiguousLayer(let name, let indices):
+            return "\(indices.count) layers are called \"\(name)\" — name one by index: \(indices.map { "#\($0)" }.joined(separator: ", "))"
         }
     }
 }

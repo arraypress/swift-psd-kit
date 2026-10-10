@@ -91,7 +91,7 @@ struct TaggedBlock {
 }
 
 /// One channel's compressed pixels.
-struct ChannelData {
+struct ChannelData: Equatable {
     /// 0 raw, 1 RLE (PackBits), 2 ZIP, 3 ZIP with prediction.
     var compression: UInt16
     var data: Data
