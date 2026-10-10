@@ -35,7 +35,8 @@ public enum PSDError: Error, LocalizedError, Sendable, Equatable {
         case .malformed(let why): return "the file is damaged or unusual: \(why)"
         case .layerNotFound(let name): return "no layer called \"\(name)\""
         case .wrongLayerKind(let name, let expected, let actual):
-            return "\"\(name)\" is a \(actual) layer, not a \(expected) layer"
+            func article(_ word: String) -> String { "aeiou".contains(word.lowercased().first ?? "x") ? "an" : "a" }
+            return "\"\(name)\" is \(article(actual)) \(actual) layer, not \(article(expected)) \(expected) layer"
         case .unsupportedForEditing(let why): return "this file can be read but not edited: \(why)"
         case .fontMissing(let font): return "the font \(font) is not installed, so the text cannot be redrawn"
         case .unreadableImage(let name): return "\(name) is not an image this system can read"

@@ -195,7 +195,7 @@ public struct PSDDocument: @unchecked Sendable {
         let index = try recordIndex(name)
         let record = file.layers.records[index]
         guard let block = record.block("TySh") else {
-            throw PSDError.wrongLayerKind(name: name, expected: "type", actual: kind(of: record).rawValue)
+            throw PSDError.wrongLayerKind(name: name, expected: "text", actual: kind(of: record).rawValue)
         }
         var tool = try TypeToolBlock(block.data)
         let engine = try TextEditing.replacingText(in: tool.engineData, with: text)
@@ -229,7 +229,7 @@ public struct PSDDocument: @unchecked Sendable {
         let layerKind = kind(of: record)
         guard layerKind == .smartObject, let block = record.block("SoLd") else {
             if layerKind == .linkedSmartObject {
-                throw PSDError.wrongLayerKind(name: name, expected: "embedded smart object", actual: "linked smart object (change the file it links to)")
+                throw PSDError.wrongLayerKind(name: name, expected: "embedded smart object", actual: "linked smart object")
             }
             throw PSDError.wrongLayerKind(name: name, expected: "smart object", actual: layerKind.rawValue)
         }
@@ -291,9 +291,10 @@ public struct PSDDocument: @unchecked Sendable {
                 file.imageData = try MergedImage.encode(file, replacing: region, from: mineAfter)
                 compositeUpdated = true
             } else {
-                compositeNote = notes.unrendered.isEmpty
+                let nearby = notes.within(region)
+                compositeNote = nearby.isEmpty
                     ? String(format: "the saved merged image could not be reproduced here (mean difference %.0f/255) — it may have been saved without Maximize Compatibility", agreement.mean)
-                    : "the merged image includes what this library cannot draw: \(notes.unrendered.joined(separator: ", "))"
+                    : "the merged image there includes what this library cannot draw: \(nearby.joined(separator: ", "))"
             }
         }
         if !compositeUpdated {

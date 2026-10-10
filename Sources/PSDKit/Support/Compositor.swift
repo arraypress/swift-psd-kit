@@ -35,6 +35,19 @@ struct Canvas {
 struct CompositeNotes {
     /// Layer names whose effects, adjustments or blend modes were skipped.
     var unrendered: [String] = []
+    /// The same, with the bounds each covers (left, top, right, bottom).
+    var unrenderedBounds: [(String, [Int])] = []
+
+    mutating func skip(_ note: String, _ record: LayerRecord?) {
+        unrendered.append(note)
+        if let record { unrenderedBounds.append((note, [Int(record.left), Int(record.top), Int(record.right), Int(record.bottom)])) }
+        else { unrenderedBounds.append((note, [Int.min / 2, Int.min / 2, Int.max / 2, Int.max / 2])) }
+    }
+
+    /// The skipped layers that overlap a rectangle.
+    func within(_ rect: (x0: Int, y0: Int, x1: Int, y1: Int)) -> [String] {
+        unrenderedBounds.filter { _, b in b[0] < rect.x1 && b[2] > rect.x0 && b[1] < rect.y1 && b[3] > rect.y0 }.map(\.0)
+    }
 }
 
 /// Flattens a file's layers.
@@ -73,10 +86,10 @@ enum Compositor {
             _ = hiddenDepth
             guard !record.isHidden else { continue }
             if record.blocks.contains(where: { adjustmentKeys.contains($0.key) }) {
-                notes.unrendered.append("\(name(of: record)) (adjustment)")
+                notes.skip("\(name(of: record)) (adjustment)", nil)
                 continue
             }
-            if hasEnabledEffects(record) { notes.unrendered.append("\(name(of: record)) (effects)") }
+            if hasEnabledEffects(record) { notes.skip("\(name(of: record)) (effects)", record) }
 
             var layer = try pixels(of: record, index: index, in: file)
             if record.clipping == 1, let base = clipBase {
@@ -149,7 +162,7 @@ enum Compositor {
     /// Source over destination with a blend mode, straight alpha.
     static func blend(_ source: Canvas, into target: inout Canvas, mode: String, opacity: Float,
                       notes: inout CompositeNotes, name: String) {
-        if !supportedBlends.contains(mode) { notes.unrendered.append("\(name) (blend \(mode))") }
+        if !supportedBlends.contains(mode) { notes.skip("\(name) (blend \(mode))", nil) }
         for pixel in 0..<(source.width * source.height) {
             let s = pixel * 4
             let alpha = source.pixels[s + 3] * opacity
