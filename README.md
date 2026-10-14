@@ -69,7 +69,7 @@ Every text and smart-object layer in ag-psd's published test files
 (`test/read`, `test/read-write`; used as test input, one shipped as a fixture
 under its licence) was edited and the result read back by psd-tools 1.24:
 
-| | |
+| Edit | Result |
 |---|---|
 | Smart-object pictures swapped | **76 of 81**; the 5 refused were 3 warped layers (by design) and 2 that found a GROUP of the same name — fixed in 0.2.0, the name now finds the layer the edit needs |
 | Text changed, layer's own font | **2 of 20** — the other 18 are set in fonts a Mac lacks without Adobe's apps: Myriad Pro (Photoshop's default), Calibri, Microsoft YaHei, Noto Sans KR, Aachen |
