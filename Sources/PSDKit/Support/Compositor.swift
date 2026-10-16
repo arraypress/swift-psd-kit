@@ -53,7 +53,11 @@ struct CompositeNotes {
 /// Flattens a file's layers.
 enum Compositor {
 
-    static let supportedBlends: Set<String> = ["norm", "pass", "mul ", "scrn", "dark", "lite", "lddg", "diff", "over"]
+    static let supportedBlends: Set<String> = ["norm", "pass", "mul ", "scrn", "dark", "lite", "lddg", "diff", "over",
+                                               "sLit", "hLit", "div ", "idiv", "lbrn", "smud", "hue ", "sat ", "colr", "lum "]
+
+    /// The modes that mix a whole colour, not each channel on its own.
+    static let colorBlends: Set<String> = ["hue ", "sat ", "colr", "lum "]
     static let adjustmentKeys: Set<String> = ["levl", "curv", "brit", "hue2", "hue ", "blnc", "blwh", "phfl", "mixr",
                                               "clrL", "nvrt", "post", "thrs", "grdm", "selc", "expA", "vibA"]
 
@@ -169,9 +173,11 @@ enum Compositor {
             guard alpha > 0 else { continue }
             let backAlpha = target.pixels[s + 3]
             let outAlpha = alpha + backAlpha * (1 - alpha)
+            let whole: [Float]? = colorBlends.contains(mode) && backAlpha > 0
+                ? blendColor(mode, Array(target.pixels[s..<(s + 3)]), Array(source.pixels[s..<(s + 3)])) : nil
             for channel in 0..<3 {
                 let cs = source.pixels[s + channel], cb = target.pixels[s + channel]
-                let mixed = backAlpha > 0 ? blendChannel(mode, cb, cs) : cs
+                let mixed = whole?[channel] ?? (backAlpha > 0 ? blendChannel(mode, cb, cs) : cs)
                 // The blended colour where both exist, the source alone where the backdrop is empty.
                 let color = (1 - backAlpha) * cs + backAlpha * mixed
                 target.pixels[s + channel] = outAlpha > 0
@@ -190,7 +196,42 @@ enum Compositor {
         case "lddg": return min(1, b + s)
         case "diff": return abs(b - s)
         case "over": return b <= 0.5 ? 2 * b * s : 1 - 2 * (1 - b) * (1 - s)
+        case "hLit": return s <= 0.5 ? 2 * b * s : 1 - 2 * (1 - b) * (1 - s)
+        case "sLit":
+            // Photoshop's soft light (CoreGraphics draws the Pegtop curve, which
+            // agrees below 0.5 and runs up to 0.05 brighter above it).
+            if s <= 0.5 { return 2 * b * s + b * b * (1 - 2 * s) }
+            return 2 * b * (1 - s) + b.squareRoot() * (2 * s - 1)
+        case "div ": return b == 0 ? 0 : (s >= 1 ? 1 : min(1, b / (1 - s)))
+        case "idiv": return b >= 1 ? 1 : (s <= 0 ? 0 : 1 - min(1, (1 - b) / s))
+        case "lbrn": return max(0, b + s - 1)
+        case "smud": return b + s - 2 * b * s
         default: return s
+        }
+    }
+
+    /// Hue, saturation, colour and luminosity: the W3C non-separable modes.
+    static func blendColor(_ mode: String, _ b: [Float], _ s: [Float]) -> [Float] {
+        func lum(_ c: [Float]) -> Float { 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2] }
+        func clip(_ c: [Float]) -> [Float] {
+            let l = lum(c), n = c.min() ?? 0, x = c.max() ?? 0
+            var c = c
+            if n < 0 { c = c.map { l + ($0 - l) * l / max(0.00001, l - n) } }
+            if x > 1 { c = c.map { l + ($0 - l) * (1 - l) / max(0.00001, x - l) } }
+            return c
+        }
+        func setLum(_ c: [Float], _ l: Float) -> [Float] { let d = l - lum(c); return clip(c.map { $0 + d }) }
+        func sat(_ c: [Float]) -> Float { (c.max() ?? 0) - (c.min() ?? 0) }
+        func setSat(_ c: [Float], _ s: Float) -> [Float] {
+            let x = c.max() ?? 0, n = c.min() ?? 0
+            guard x > n else { return [0, 0, 0] }
+            return c.map { ($0 - n) * s / (x - n) }
+        }
+        switch mode {
+        case "hue ": return setLum(setSat(s, sat(b)), lum(b))
+        case "sat ": return setLum(setSat(b, sat(s)), lum(b))
+        case "colr": return setLum(s, lum(b))
+        default: return setLum(b, lum(s))
         }
     }
 

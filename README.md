@@ -16,6 +16,34 @@ try poster.replaceContents(of: "Photo", with: picture)   // fill, fit or stretch
 try poster.write(to: output)              // re-read and checked before it is kept
 ```
 
+## Writing a layered file (0.3)
+
+```swift
+let layers = [
+    PSDWriteLayer(name: "background", content: .pixels(background)),
+    PSDWriteLayer(name: "label", content: .group([
+        PSDWriteLayer(name: "strip", content: .pixels(strip)),
+        PSDWriteLayer(name: "title", content: .pixels(title), blendKey: "mul "),
+    ]), opacity: 0.9),
+]
+let data = try PSDWriter.data(width: 3000, height: 3000, layers: layers, composite: flattened, dpi: 300)
+```
+
+A new 8-bit RGB PSD from pictures, layers bottom first: each a pixel layer
+cropped to its alpha, with its name (Unicode, `luni`), opacity, blend key and
+visibility; a group is a Photoshop folder (`lsct` divider and header records);
+the flattened picture is the merged image; the resolution is recorded.
+**Text arrives as pixels**: an editable type layer needs Photoshop's text-engine
+data, which this writer does not make. design (`design … -o cover.psd`) is the
+first user. A written file reads back through this library's reader byte for
+byte, opens in ImageIO, and psd-tools 1.25 lists the same layers and blends.
+
+The compositor now draws every blend design uses — soft and hard light, colour
+dodge and burn, linear burn, exclusion, and the non-separable hue, saturation,
+colour and luminosity (the W3C definitions) — in Photoshop's arithmetic. Soft
+light is Photoshop's curve, not the W3C/Pegtop one CoreGraphics draws; the two
+agree below 50 % grey and differ by up to 0.05 above it.
+
 ## The honest part: three readers
 
 A PSD is read three ways, and an edit has to reach each:
@@ -100,7 +128,7 @@ document's `Txt2` block is omitted).
 
 ## Layout
 
-`Core/` PSDDocument, PSDCodec · `Support/` Descriptor, EngineData, TypeToolBlock
+`Core/` PSDDocument, PSDCodec, PSDWriter · `Support/` Descriptor, EngineData, TypeToolBlock
 (TySh, SoLd, lnk2), ChannelCodec (raw/PackBits/ZIP), TextRenderer, Compositor,
 SmartObjectRenderer, LayerPixels · `Models/` · `Enums/` · `Errors/`.
 
